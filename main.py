@@ -251,7 +251,7 @@ class SuperficieMapa(Widget):
 class TableroTactil(Scatter):
     """Dos dedos amplían/reducen, uno arrastra. Un toque corto selecciona."""
 
-    def __init__(self, surface, callback, **kw):
+    def __init__(self, surface, callback, callback_doble=None, **kw):
         super().__init__(**kw)
         self.do_rotation = False
         self.do_scale = True
@@ -264,13 +264,16 @@ class TableroTactil(Scatter):
         self.add_widget(surface)
         self._inicios = {}
         self._callback = callback
+        self._callback_doble = callback_doble
         self._multitouch = False
+        self._ultima_pulsacion = None
 
     def on_touch_down(self, touch):
         if self.collide_point(*touch.pos):
             self._inicios[touch.uid] = (touch.pos[:], time.monotonic())
             if len(self._inicios) > 1:
                 self._multitouch = True
+                self._ultima_pulsacion = None
         return super().on_touch_down(touch)
 
     def on_touch_up(self, touch):
@@ -278,12 +281,29 @@ class TableroTactil(Scatter):
         if inicio:
             cx, cy = touch.pos
             x, y = self.to_local(cx, cy)
-            if (
+            ahora = time.monotonic()
+            toque_breve = (
                 not self._multitouch
                 and math.dist(inicio[0], (cx, cy)) < dp(14)
-                and time.monotonic() - inicio[1] < 0.65
-            ):
-                self._callback(x, y)
+                and ahora - inicio[1] < 0.65
+            )
+            if toque_breve:
+                anterior = self._ultima_pulsacion
+                doble = (
+                    anterior is not None
+                    and ahora - anterior[0] <= 0.37
+                    and math.dist(anterior[1], (cx, cy)) <= dp(22)
+                )
+                # Al incorporar, el segundo toque sobre la misma ficha
+                # refuerza sin abrir un dialogo. En las otras fases se
+                # conserva el comportamiento de toque simple.
+                if doble and self._callback_doble and self._callback_doble(x, y):
+                    self._ultima_pulsacion = None
+                else:
+                    self._callback(x, y)
+                    self._ultima_pulsacion = (ahora, (cx, cy))
+            else:
+                self._ultima_pulsacion = None
         if not self._inicios:
             self._multitouch = False
         return super().on_touch_up(touch)
@@ -399,10 +419,13 @@ class VistaJuego(BoxLayout):
         self.zona_mapa = StencilView(size_hint=(1, 1))
         sombrear(self.zona_mapa)
         self.mapa = SuperficieMapa(c)
-        self.scatter = TableroTactil(self.mapa, self._pais_tocado)
+        self.scatter = TableroTactil(
+            self.mapa, self._pais_tocado, self._pais_doble_tocado
+        )
         self.zona_mapa.add_widget(self.scatter)
         self.add_widget(self.zona_mapa)
         self._posicionado = False
+        self._ultimo_pais_tocado = None
         self.zona_mapa.bind(size=self.ajustar_mapa)
 
         # Barra derecha fija, fuera de la superficie tactil del mapa.
@@ -414,13 +437,6 @@ class VistaJuego(BoxLayout):
         self.add_widget(self.lateral)
         self.bind(size=self.ajustar_ancho_lateral)
         self.ajustar_ancho_lateral()
-
-        self.hud = BoxLayout(
-            orientation="vertical", size_hint_y=None, height=dp(69)
-        )
-        self.texto_hud = etiqueta("", tam=14)
-        self.hud.add_widget(self.texto_hud)
-        self.lateral.add_widget(self.hud)
 
         herramientas = BoxLayout(
             orientation="horizontal", size_hint_y=None,
@@ -435,11 +451,6 @@ class VistaJuego(BoxLayout):
         )
         self.lateral.add_widget(herramientas)
 
-        self.titulo_turnos = etiqueta(
-            "ORDEN DE TURNOS", tam=14, color=GOLD,
-            size_hint_y=None, height=dp(24), bold=True
-        )
-        self.lateral.add_widget(self.titulo_turnos)
         self.lista_turnos = BoxLayout(
             orientation="vertical", size_hint_y=None, spacing=dp(2)
         )
@@ -462,7 +473,6 @@ class VistaJuego(BoxLayout):
         self.modo_panel = "normal"
         self._ultima_ui = None
         self._ultimo_dialogo = None
-        self._ultimo_estado = None
         self._ultima_orden = None
         self._ultima_actualizacion = 0
         self._ultimo_paso = time.monotonic()
@@ -497,9 +507,6 @@ class VistaJuego(BoxLayout):
         if firma == self._ultima_orden:
             return
         self._ultima_orden = firma
-        self.titulo_turnos.text = (
-            f"ORDEN · RONDA {j.ronda}" if j.ronda else "ORDEN · PREPARACIÓN"
-        )
         self.lista_turnos.clear_widgets()
         for puesto, idx in enumerate(orden, 1):
             jugador = j.jugadores[idx]
@@ -535,24 +542,38 @@ class VistaJuego(BoxLayout):
             self.lista_turnos.add_widget(fila)
         self.lista_turnos.height = len(orden) * dp(30)
 
-    def _pais_tocado(self, x, y):
-        p = self.mapa.pais_cercano(
+    def _buscar_pais(self, x, y):
+        return self.mapa.pais_cercano(
             x, y, radio=max(24, dp(23) / max(0.2, self.scatter.scale))
         )
+
+    def _pais_tocado(self, x, y):
+        p = self._buscar_pais(x, y)
+        self._ultimo_pais_tocado = p
         if p:
             estaba_en_pactos = bool(
                 self.c.dialogo and self.c.dialogo["kind"] == "pactos"
             )
             self.c.tocar_pais(p)
             self._ultima_ui = None
-            # No obligar a cerrar un panel cada vez que se toca una ficha.
-            # Si el usuario estaba negociando, refrescar las opciones de pacto.
+            # Mantener la navegación del mapa mientras se negocian pactos.
             if estaba_en_pactos:
                 self.c.ver_pactos()
             elif self.c.dialogo and self.c.dialogo["kind"] == "propuesta_bot":
                 self._llenar_panel()
             elif self.cajon and self.modo_panel == "pais":
                 self._llenar_panel()
+
+    def _pais_doble_tocado(self, x, y):
+        p = self._buscar_pais(x, y)
+        if not p or p != self._ultimo_pais_tocado:
+            return False
+        if not self.c.incorporar_uno_por_doble_toque(p):
+            return False
+        self._ultima_ui = None
+        if self.cajon and self.modo_panel == "pais":
+            self._llenar_panel()
+        return True
 
     def abrir_accion(self, accion):
         if self.c.dialogo and self.c.dialogo["obligatorio"]:
@@ -761,10 +782,6 @@ class VistaJuego(BoxLayout):
                 f'Ronda {estado["ronda"]}  ·  {estado["situacion"]}', color=GOLD
             )
             self._agregar_texto(f'Fase: {estado["fase"]} · {estado["etapa_ronda"]}')
-            for nombre, n, elim in estado["jugadores"]:
-                self._agregar_texto(
-                    f"{nombre}: {n} países" + (" · eliminado" if elim else ""), tam=13
-                )
             if estado["refuerzos"]:
                 r = estado["refuerzos"]
                 self._agregar_texto(f'Refuerzos: {r["total"]}; libres {r["libres"]}')
@@ -773,12 +790,7 @@ class VistaJuego(BoxLayout):
                     + ", ".join(f"{c}: {n}" for c, n in r["continentes"].items()),
                     tam=13,
                 )
-            self._agregar_texto("ÚLTIMOS EVENTOS", color=GOLD)
-            self._agregar_texto("\n".join(j.historial[-8:]), tam=12, alto=155)
             self._agregar_boton("PACTOS", lambda: self.abrir_accion("pactos"))
-            self._agregar_boton(
-                "HISTORIAL COMPLETO", lambda: self.abrir_accion("historial")
-            )
             self._agregar_boton(
                 "VELOCIDAD BOTS", lambda: self.abrir_accion("velocidad")
             )
@@ -798,32 +810,7 @@ class VistaJuego(BoxLayout):
         ):
             self._ultimo_paso = ahora
             self.c.tick()
-        estado = (
-            j.ronda,
-            j.turno_idx,
-            j.fase,
-            j.etapa_ronda,
-            j.ejercitos_a_colocar,
-            self.c.origen,
-            self.c.destino,
-            self.c.inspeccion,
-            self.c.aviso,
-            self.c.velocidad,
-            self.c.animaciones,
-        )
         self.actualizar_orden_turnos()
-        if estado != self._ultimo_estado:
-            self._ultimo_estado = estado
-            seleccion = (
-                f"{self.c.origen} → {self.c.destino}"
-                if self.c.destino
-                else f"Origen: {self.c.origen}" if self.c.origen else ""
-            )
-            self.texto_hud.text = (
-                f"R{j.ronda} · {j.fase} · {j.jugador_actual().nombre}\n"
-                f"{j.situacion} · {seleccion}\n"
-                f"{self.c.aviso[:80]}"
-            )
         if self.c.dialogo is not self._ultimo_dialogo:
             self._ultimo_dialogo = self.c.dialogo
             if self.c.dialogo:
