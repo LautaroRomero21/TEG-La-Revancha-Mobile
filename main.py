@@ -46,12 +46,13 @@ SOFT = (0.64, 0.73, 0.82, 1)
 
 
 def etiqueta(texto="", tam=15, color=INK, **kwargs):
+    # La pantalla puede sobrescribir la alineacion sin duplicar keywords.
+    kwargs.setdefault("halign", "left")
+    kwargs.setdefault("valign", "middle")
     l = Label(
         text=str(texto),
         font_size=dp(tam),
         color=color,
-        halign="left",
-        valign="middle",
         **kwargs,
     )
     l.bind(size=lambda w, _: setattr(w, "text_size", w.size))
