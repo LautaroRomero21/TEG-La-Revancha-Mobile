@@ -26,6 +26,22 @@ def main():
     juego.actualizar(1 / 24)
     juego.mapa.renderizar()
     assert len(juego.c.juego.tablero) == 72
+    assert juego.children[0] is juego.lateral, "El panel no está a la derecha"
+    assert juego.children[1] is juego.zona_mapa, "El mapa no está a la izquierda"
+    assert juego.acciones.orientation == "vertical"
+    assert len(juego.lista_turnos.children) == 2
+    assert juego.c.resumen()["jugadores"][0][0] == juego.c.juego.jugadores[
+        juego.c.juego.orden_visual_jugadores()[0]
+    ].nombre
+
+    # Cambiar el orden visual de ronda sin modificar la logica de turnos.
+    j = juego.c.juego
+    anterior = list(j.orden_ronda)
+    j.orden_ronda = anterior[1:] + anterior[:1]
+    juego.actualizar_orden_turnos()
+    assert juego.lista_turnos.children[-1].children[0].text.startswith("1. " + j.jugadores[j.orden_ronda[0]].nombre)
+    assert juego.c.resumen()["jugadores"][0][0] == j.jugadores[j.orden_ronda[0]].nombre
+    print("SMOKE: mapa lateral y orden dinamico de rondas OK.", flush=True)
     print("SMOKE: vista de partida, recursos de mapa, controles y 72 países OK.", flush=True)
 
     Window.close()
