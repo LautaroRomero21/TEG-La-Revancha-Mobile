@@ -37,8 +37,8 @@ jobs:
       - name: Verificar arranque de interfaz Kivy en Xvfb
         env:
           KIVY_NO_ARGS: '1'
-          KIVY_NO_CONSOLELOG: '0'
-        run: xvfb-run -a python smoke_ui.py
+          KIVY_NO_FILELOG: '1'
+        run: xvfb-run -a python -u smoke_ui.py
       - name: Compilar APK sin firma de distribución (debug)
         run: buildozer -v android debug
       - uses: actions/upload-artifact@v4
