@@ -500,4 +500,6 @@ class ControlMovil:
                     turno=jugador.nombre, color=jugador.color_nombre, bot=jugador.es_bot,
                     situacion=j.situacion,refuerzos=ref, origen=self.origen,
                     destino=self.destino,inspeccion=self.inspeccion,anuncio=self.aviso,
-                    jugadores=[(p.nombre,len(j.paises_de(p.idx)),p.eliminado) for p in j.jugadores])
+                    jugadores=[(j.jugadores[i].nombre,len(j.paises_de(i)),
+                                j.jugadores[i].eliminado)
+                               for i in j.orden_visual_jugadores()])
