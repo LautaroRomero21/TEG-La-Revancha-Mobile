@@ -1,0 +1,15 @@
+{
+  "fuente": "TEG_La_Revancha.rar (v16)",
+  "estado_android": "fuentes y configuración; APK no compilado",
+  "motor_archivos_sha256": {
+    "logic.py": "bc080aee41e658ecf1377bdb432bd9160032758d03f4e3811ee11abebe220484",
+    "data.py": "1ebf3651e6e5aceafae735008bf677e7f44ee5cf422c9c344e1f72ff3d7dde62",
+    "pactos.py": "b41a126cb35622ecf91070003da808d47acfd66a37f9083926e63dae1e4bcb44",
+    "respuestas_pactos.py": "b7cdbfce4fdd14764f8b79f8251b45ac4db8df40223f50b8c93e8f28b6b32380"
+  },
+  "pruebas_motor_original": 126,
+  "pruebas_adaptador": 16,
+  "kivy_instalado_en_entorno": false,
+  "compilacion_apk_ejecutada": false,
+  "prueba_visual_android_ejecutada": false
+}
