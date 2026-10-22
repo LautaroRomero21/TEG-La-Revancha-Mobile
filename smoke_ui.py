@@ -29,6 +29,10 @@ def main():
     assert juego.children[0] is juego.lateral, "El panel no está a la derecha"
     assert juego.children[1] is juego.zona_mapa, "El mapa no está a la izquierda"
     assert juego.acciones.orientation == "vertical"
+    assert not hasattr(juego, "hud"), "El encabezado redundante sigue presente"
+    assert not hasattr(juego, "titulo_turnos"), "El titulo de turnos sigue presente"
+    assert juego.scatter._callback_doble is not None
+    assert not hasattr(juego, "texto_hud")
     assert len(juego.lista_turnos.children) == 2
     assert juego.c.resumen()["jugadores"][0][0] == juego.c.juego.jugadores[
         juego.c.juego.orden_visual_jugadores()[0]
