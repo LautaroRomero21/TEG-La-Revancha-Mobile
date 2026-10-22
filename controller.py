@@ -99,6 +99,28 @@ class ControlMovil:
             self.destino = pais
         return True
 
+    def incorporar_uno_por_doble_toque(self, pais):
+        """Incorpora una tropa sin popup al tocar dos veces un país propio.
+
+        Usa las mismas validaciones del motor que la incorporación manual,
+        incluyendo límites continentales y países bloqueados.
+        """
+        j = self.juego
+        if (self.dialogo is not None or j.fase != FASE_INCORPORAR
+                or j.turno_idx != 0 or j.jugador_actual().es_bot
+                or j.conquista_pendiente or j.ejercitos_a_colocar < 1
+                or pais not in j.tablero or not j.es_propietario(pais, 0)):
+            return False
+        if not j.incorporar(pais, 1):
+            self.aviso = f'{pais}: no se puede incorporar aquí.'
+            return False
+        self.inspeccion = pais
+        self.origen, self.destino = pais, None
+        self._evento('incorporar', pais, texto=f'+1 ejército en {pais}')
+        if j.fase != FASE_INCORPORAR:
+            self.cancelar_seleccion()
+        return True
+
     def seleccionar_origen(self, pais):
         if pais in self.juego.tablero and self.juego.es_propietario(pais, 0):
             self.origen, self.destino = pais, None
@@ -171,15 +193,27 @@ class ControlMovil:
                                     f'continentales: {j.desglose_incorporacion()["continentes"]}',
                                     [(f'+{n}', f'incorporar:{n}') for n in (1, 3, 5, 10, 20)] +
                                     [('Todos posibles', 'incorporar:max'), ('Cerrar','cerrar')])
-            if cantidad == 'max':
-                cantidad = min(j.ejercitos_a_colocar,
-                              j.desglose_incorporacion()['libres'] +
-                              j.refuerzos_continente.get(j.tablero[self.origen]['continente'], 0))
-            if cantidad and j.incorporar(self.origen, int(cantidad)):
-                self._evento('incorporar', self.origen, texto=f'+{cantidad} ejércitos en {self.origen}')
+            desglose = j.desglose_incorporacion()
+            disponibles_en_pais = min(
+                j.ejercitos_a_colocar,
+                desglose['libres'] +
+                desglose['continentes'].get(j.tablero[self.origen]['continente'], 0),
+            )
+            try:
+                solicitado = disponibles_en_pais if cantidad == 'max' else int(cantidad)
+            except (TypeError, ValueError):
+                return self._error('Elegí una cantidad válida de ejércitos.')
+            if solicitado < 1 or disponibles_en_pais < 1:
+                return self._error('No hay refuerzos disponibles para ese país.')
+            cantidad_real = min(solicitado, disponibles_en_pais)
+            if j.incorporar(self.origen, cantidad_real):
+                self._evento('incorporar', self.origen,
+                             texto=f'+{cantidad_real} ejércitos en {self.origen}')
                 self.dialogo = None
+                if j.fase != FASE_INCORPORAR:
+                    self.cancelar_seleccion()
                 return True
-            return self._error('No hay suficientes refuerzos utilizables en ese continente, o está bloqueado.')
+            return self._error('No se puede incorporar en ese país (bloqueo u otra regla).')
         if nombre in ('misil_nuevo', 'misil_convertir'):
             if not self.origen or not j.incorporar_misil(self.origen, reemplazar=nombre=='misil_convertir'):
                 return self._error('Se requieren 6 refuerzos o 7 ejércitos en un país propio habilitado.')
