@@ -32,7 +32,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install buildozer cython virtualenv
       - name: Probar motor y adaptador
-        run: ./ejecutar_pruebas.sh
+        run: bash ./ejecutar_pruebas.sh
       - name: Compilar APK sin firma de distribución (debug)
         run: buildozer -v android debug
       - uses: actions/upload-artifact@v4
