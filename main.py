@@ -24,6 +24,7 @@ from kivy.properties import ObjectProperty
 from kivy.uix.widget import Widget
 from kivy.uix.scatter import Scatter
 from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.stencilview import StencilView
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.label import Label
@@ -384,65 +385,155 @@ class PantallaInicio(BoxLayout):
         self.add_widget(centro)
 
 
-class VistaJuego(FloatLayout):
+class VistaJuego(BoxLayout):
+    """Tablero amplio a la izquierda y todos los mandos a la derecha."""
+
     def __init__(self, c, **kw):
-        super().__init__(**kw)
+        super().__init__(
+            orientation="horizontal", spacing=dp(6), padding=dp(5), **kw
+        )
         self.c = c
         sombrear(self)
+
+        # La zona izquierda recorta el mapa al desplazar o ampliar.
+        self.zona_mapa = StencilView(size_hint=(1, 1))
+        sombrear(self.zona_mapa)
         self.mapa = SuperficieMapa(c)
         self.scatter = TableroTactil(self.mapa, self._pais_tocado)
-        self.add_widget(self.scatter)
+        self.zona_mapa.add_widget(self.scatter)
+        self.add_widget(self.zona_mapa)
         self._posicionado = False
-        self.bind(size=self.ajustar_mapa)
-        self.capa = FloatLayout(size_hint=(1, 1))
-        self.add_widget(self.capa)
+        self.zona_mapa.bind(size=self.ajustar_mapa)
+
+        # Barra derecha fija, fuera de la superficie tactil del mapa.
+        self.lateral = BoxLayout(
+            orientation="vertical", size_hint=(None, 1),
+            spacing=dp(5), padding=[dp(7), dp(6)]
+        )
+        sombrear(self.lateral, (0.075, 0.119, 0.176, 1))
+        self.add_widget(self.lateral)
+        self.bind(size=self.ajustar_ancho_lateral)
+        self.ajustar_ancho_lateral()
+
         self.hud = BoxLayout(
-            orientation="horizontal",
-            size_hint=(1, None),
-            height=dp(62),
-            pos_hint={"top": 1},
-            padding=[dp(10), dp(4)],
-            spacing=dp(6),
+            orientation="vertical", size_hint_y=None, height=dp(69)
         )
-        sombrear(self.hud, PANEL)
-        self.texto_hud = etiqueta("", tam=15)
+        self.texto_hud = etiqueta("", tam=14)
         self.hud.add_widget(self.texto_hud)
-        self.hud.add_widget(boton("◀ PANEL", self.abrir_panel, altura=52))
-        self.hud.add_widget(
-            boton("OBJETIVO", lambda: self.abrir_accion("objetivos"), altura=52)
+        self.lateral.add_widget(self.hud)
+
+        herramientas = BoxLayout(
+            orientation="horizontal", size_hint_y=None,
+            height=dp(45), spacing=dp(4)
         )
-        self.hud.add_widget(
-            boton("CARTAS", lambda: self.abrir_accion("tarjetas"), altura=52)
+        herramientas.add_widget(boton("ESTADO", self.abrir_panel, altura=43))
+        herramientas.add_widget(
+            boton("OBJETIVO", lambda: self.abrir_accion("objetivos"), altura=43)
         )
-        self.capa.add_widget(self.hud)
+        herramientas.add_widget(
+            boton("CARTAS", lambda: self.abrir_accion("tarjetas"), altura=43)
+        )
+        self.lateral.add_widget(herramientas)
+
+        self.titulo_turnos = etiqueta(
+            "ORDEN DE TURNOS", tam=14, color=GOLD,
+            size_hint_y=None, height=dp(24), bold=True
+        )
+        self.lateral.add_widget(self.titulo_turnos)
+        self.lista_turnos = BoxLayout(
+            orientation="vertical", size_hint_y=None, spacing=dp(2)
+        )
+        self.lateral.add_widget(self.lista_turnos)
+
+        # Los botones de fase y los dialogos comparten esta columna;
+        # no se superponen al tablero. En pantallas bajas hay scroll.
+        self.cuerpo_lateral = BoxLayout(orientation="vertical")
+        self.lateral.add_widget(self.cuerpo_lateral)
         self.acciones = BoxLayout(
-            orientation="horizontal",
-            size_hint=(1, None),
-            height=dp(76),
-            pos_hint={"y": 0},
-            padding=[dp(8), dp(8)],
-            spacing=dp(5),
+            orientation="vertical", size_hint_y=None,
+            spacing=dp(6), padding=[dp(2), dp(4)]
         )
-        sombrear(self.acciones, PANEL)
-        self.capa.add_widget(self.acciones)
+        self.acciones.bind(minimum_height=self.acciones.setter("height"))
+        self.scroll_acciones = ScrollView(do_scroll_x=False)
+        self.scroll_acciones.add_widget(self.acciones)
+        self.cuerpo_lateral.add_widget(self.scroll_acciones)
+
         self.cajon = None
-        self.firma = None
-        self._ultimo_dialogo = None
+        self.modo_panel = "normal"
         self._ultima_ui = None
+        self._ultimo_dialogo = None
         self._ultimo_estado = None
+        self._ultima_orden = None
         self._ultima_actualizacion = 0
         self._ultimo_paso = time.monotonic()
+        self.actualizar_orden_turnos()
         Clock.schedule_interval(self.actualizar, 1 / 24)
-        Clock.schedule_once(lambda dt: self.ajustar_mapa(), 0)
+        Clock.schedule_once(lambda _dt: self.ajustar_mapa(), 0)
+
+    def ajustar_ancho_lateral(self, *_):
+        # Mantener al mapa la mayor parte de la pantalla.
+        self.lateral.width = min(
+            self.width * 0.44, max(self.width * 0.34, dp(220))
+        )
 
     def ajustar_mapa(self, *_):
-        if self.width < 1 or self.height < 1:
+        if self._posicionado or self.zona_mapa.width < 200 or self.zona_mapa.height < 180:
             return
-        if not self._posicionado:
-            s = min(self.width / 1200, max(dp(90), self.height - dp(145)) / 900)
-            self.scatter.scale = s
-            self.scatter.center = (self.width / 2, self.height / 2)
-            self._posicionado = True
+        escala = min(self.zona_mapa.width / 1200, self.zona_mapa.height / 900) * 0.98
+        self.scatter.scale = escala
+        self.scatter.center = (
+            self.zona_mapa.width / 2,
+            self.zona_mapa.height / 2
+        )
+        self._posicionado = True
+
+    def actualizar_orden_turnos(self):
+        j = self.c.juego
+        orden = j.orden_visual_jugadores()
+        firma = (
+            j.ronda, tuple(orden), j.turno_idx,
+            tuple((len(j.paises_de(i)), j.jugadores[i].eliminado) for i in orden),
+        )
+        if firma == self._ultima_orden:
+            return
+        self._ultima_orden = firma
+        self.titulo_turnos.text = (
+            f"ORDEN · RONDA {j.ronda}" if j.ronda else "ORDEN · PREPARACIÓN"
+        )
+        self.lista_turnos.clear_widgets()
+        for puesto, idx in enumerate(orden, 1):
+            jugador = j.jugadores[idx]
+            actual = idx == j.turno_idx
+            fila = BoxLayout(
+                orientation="horizontal", size_hint_y=None,
+                height=dp(28), spacing=dp(7), padding=[dp(5), 0]
+            )
+            if actual:
+                sombrear(fila, (0.16, 0.28, 0.38, 1))
+            muestra = Widget(size_hint=(None, 1), width=dp(14))
+            with muestra.canvas:
+                rgb = tuple(v / 255 for v in jugador.color[:3])
+                Color(*rgb, 1)
+                figura = RoundedRectangle(
+                    pos=(muestra.x, muestra.y + dp(7)),
+                    size=(dp(13), dp(13)), radius=[dp(3)]
+                )
+            muestra.bind(
+                pos=lambda w, _p, f=figura: setattr(
+                    f, "pos", (w.x, w.y + dp(7))
+                )
+            )
+            fila.add_widget(muestra)
+            estado = " · FUERA" if jugador.eliminado else ""
+            aviso = "  ◀ AHORA" if actual else ""
+            fila.add_widget(etiqueta(
+                f"{puesto}. {jugador.nombre} · {len(j.paises_de(idx))} países"
+                f"{estado}{aviso}",
+                tam=12, color=GOLD if actual else SOFT,
+                shorten=True, shorten_from="right"
+            ))
+            self.lista_turnos.add_widget(fila)
+        self.lista_turnos.height = len(orden) * dp(30)
 
     def _pais_tocado(self, x, y):
         p = self.mapa.pais_cercano(
@@ -489,33 +580,30 @@ class VistaJuego(FloatLayout):
         if self.c.dialogo:
             modo = "dialogo"
         if self.cajon:
-            self.remove_widget(self.cajon)
-        ancho = min(max(dp(300), self.width * 0.39), dp(530))
+            self.cuerpo_lateral.remove_widget(self.cajon)
+        else:
+            self.cuerpo_lateral.remove_widget(self.scroll_acciones)
         self.cajon = BoxLayout(
             orientation="vertical",
-            spacing=dp(8),
-            padding=[dp(12), dp(7)],
-            size_hint=(None, 1),
-            width=ancho,
-            pos=(self.width - ancho, 0),
+            spacing=dp(6),
+            padding=[dp(5), dp(5)]
         )
         sombrear(self.cajon, PANEL)
         cabeza = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(6))
-        self.titulo_cajon = etiqueta("DETALLE", tam=18, color=GOLD)
+        self.titulo_cajon = etiqueta("DETALLE", tam=16, color=GOLD)
         cabeza.add_widget(self.titulo_cajon)
-        cabeza.add_widget(boton("✕", self.cerrar_panel, altura=36))
+        cabeza.add_widget(boton("CERRAR", self.cerrar_panel, altura=36))
         self.cajon.add_widget(cabeza)
         self.scroll = ScrollView(do_scroll_x=False)
         self.contenido = BoxLayout(
             orientation="vertical",
-            size_hint_y=None,
-            spacing=dp(7),
-            padding=[0, 0, dp(7), dp(10)],
+            size_hint_y=None, spacing=dp(7),
+            padding=[0, 0, dp(7), dp(10)]
         )
         self.contenido.bind(minimum_height=self.contenido.setter("height"))
         self.scroll.add_widget(self.contenido)
         self.cajon.add_widget(self.scroll)
-        self.add_widget(self.cajon)
+        self.cuerpo_lateral.add_widget(self.cajon)
         self.modo_panel = modo
         self._llenar_panel()
 
@@ -523,8 +611,9 @@ class VistaJuego(FloatLayout):
         if self.c.dialogo and self.c.dialogo["obligatorio"]:
             return
         if self.cajon:
-            self.remove_widget(self.cajon)
+            self.cuerpo_lateral.remove_widget(self.cajon)
             self.cajon = None
+            self.cuerpo_lateral.add_widget(self.scroll_acciones)
         if self.c.dialogo:
             self.c.cerrar_dialogo()
         self._ultimo_dialogo = None
@@ -722,6 +811,7 @@ class VistaJuego(FloatLayout):
             self.c.velocidad,
             self.c.animaciones,
         )
+        self.actualizar_orden_turnos()
         if estado != self._ultimo_estado:
             self._ultimo_estado = estado
             seleccion = (
@@ -761,7 +851,8 @@ class VistaJuego(FloatLayout):
                     etiqueta(
                         "Esperando al rival o una decisión pendiente…",
                         halign="center",
-                        color=SOFT,
+                        color=SOFT, size_hint_y=None,
+                        height=dp(45),
                     )
                 )
             for a in acciones:
@@ -770,7 +861,7 @@ class VistaJuego(FloatLayout):
                         nombres.get(a, a),
                         lambda op=a: self.abrir_accion(op),
                         color=(0.17, 0.39, 0.29, 1) if a == "pasar" else BTN,
-                        altura=59,
+                        altura=48,
                     )
                 )
             self.acciones.add_widget(
