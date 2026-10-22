@@ -820,8 +820,9 @@ class VistaJuego(BoxLayout):
                 else f"Origen: {self.c.origen}" if self.c.origen else ""
             )
             self.texto_hud.text = (
-                f"R{j.ronda}  ·  {j.fase}  ·  {j.jugador_actual().nombre}  ·  {seleccion}\n"
-                f"{j.situacion}  |  {self.c.aviso[:100]}"
+                f"R{j.ronda} · {j.fase} · {j.jugador_actual().nombre}\n"
+                f"{j.situacion} · {seleccion}\n"
+                f"{self.c.aviso[:80]}"
             )
         if self.c.dialogo is not self._ultimo_dialogo:
             self._ultimo_dialogo = self.c.dialogo
