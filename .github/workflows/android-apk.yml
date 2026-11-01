@@ -10,6 +10,9 @@ on:
       - 'assets/**'
       - 'buildozer.spec'
       - '.github/workflows/android-apk.yml'
+concurrency:
+  group: teg-android-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   debug-apk:
     runs-on: ubuntu-24.04
