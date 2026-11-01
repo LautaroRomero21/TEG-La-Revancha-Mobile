@@ -19,10 +19,13 @@ def main():
     assert isinstance(inicio.children[0], PantallaInicio), "No se creó la pantalla inicial"
     print("SMOKE: pantalla inicial Kivy renderizable.", flush=True)
 
-    app.iniciar(2, 0, True, False)
+    assert inicio.children[0].selector_dificultad.values == ["Normal", "Difícil"]
+    assert inicio.children[0].selector_dificultad.text == "Normal"
+    app.iniciar(2, 0, True, False, "Dificil")
     assert len(app.rootview.children) == 1
     juego = app.rootview.children[0]
     assert isinstance(juego, VistaJuego), "No se creó la pantalla de partida"
+    assert juego.c.juego.dificultad == "Dificil", "No se aplicó la dificultad"
     juego.actualizar(1 / 24)
     juego.mapa.renderizar()
     assert len(juego.c.juego.tablero) == 72
