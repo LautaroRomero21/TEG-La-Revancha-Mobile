@@ -25,10 +25,11 @@ class ControlMovil:
     VELOCIDADES = [None, 1.1, .55, .25, .09]
 
     def __init__(self, n_jugadores=4, color_humano=0,
-                 objetivos_eliminacion=True, animaciones=True, orden_inicial=None):
+                 objetivos_eliminacion=True, animaciones=True,
+                 orden_inicial=None, dificultad='Normal'):
         self.juego = JuegoTEG(n_jugadores=n_jugadores, color_humano=color_humano,
                               objetivos_eliminacion=objetivos_eliminacion,
-                              orden_inicial=orden_inicial)
+                              orden_inicial=orden_inicial, dificultad=dificultad)
         self.animaciones = animaciones
         self.velocidad = 1
         self.origen = None
@@ -346,7 +347,17 @@ class ControlMovil:
                 for i in j.condominios[self.origen]:
                     if i not in (a,socio) and j.ejercitos_de(self.origen,i)>=2 and j.jugadores[i].es_bot:
                         candidatos.insert(0,(i,self.origen))
-            if not candidatos:return self._error('No hay aliado con 2 ejércitos adyacente al objetivo.')
+            candidatos = [
+                (i, p) for i, p in candidatos
+                if j.puede_proponer_agresion_conjunta(
+                    a, i, self.origen, p, self.destino
+                )
+            ]
+            if not candidatos:
+                return self._error(
+                    'No hay ataque conjunto legal desde ambos orígenes '
+                    '(fronteras, tropas, situación o pactos).'
+                )
             return self._dialogo('agresion', 'Agresión conjunta',
                                  'Elegí socio y país desde el cual participará.',
                                  [(f'{j.jugadores[i].color_nombre}: {p}',f'aliado:{i}:{p}') for i,p in candidatos[:10]])
@@ -392,6 +403,14 @@ class ControlMovil:
                  [('Mi turno','lider:0'),(f'Turno de {j.jugadores[int(i)].color_nombre}',f'lider:{i}')])
         if codigo.startswith('lider:'):
             b=self._agresion_socio;lider=int(codigo.rsplit(':',1)[1])
+            if not j.puede_proponer_agresion_conjunta(
+                0, b, self.origen, self._agresion_origen,
+                self.destino, lider=lider
+            ):
+                return self._error(
+                    'El ataque conjunto ya no es legal: revisá fronteras, '
+                    'situación, ejércitos y pactos.'
+                )
             if not j.bot_acepta_pacto(b,'agresion',0,self.destino):return self._error('El bot rechazó el ataque conjunto.')
             ag=j.proponer_agresion_conjunta(0,b,self.origen,self._agresion_origen,self.destino,lider=lider)
             if not ag:return self._error('No se reúnen los requisitos de agresión conjunta.')
@@ -467,7 +486,14 @@ class ControlMovil:
             if not self.victoria_mostrada:
                 self.victoria_mostrada = True
                 ganador=j.jugadores[j.ganador_idx].nombre
-                self._dialogo('victoria','¡VICTORIA!',f'{ganador} ganó la partida.',
+                detalle=j.detalle_victoria or {}
+                objetivos=detalle.get('objetivos') or []
+                clase=('Objetivo general (45 países)'
+                       if detalle.get('tipo')=='general'
+                       else 'Misión secreta cumplida')
+                texto=(f'{ganador} ganó la partida.\\n{clase}.'
+                       + (f'\\n' + '\\n'.join(objetivos) if objetivos else ''))
+                self._dialogo('victoria','¡VICTORIA!',texto,
                               [('Ver tablero','cerrar')])
             return None
         if j.etapa=='hostilidades' and j.ronda>=2 and j.ronda>self.situacion_anunciada:
