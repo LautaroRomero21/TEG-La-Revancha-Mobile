@@ -712,8 +712,21 @@ class VistaJuego(BoxLayout):
                 self._agregar_boton(
                     "CANJEAR SELECCIÓN", lambda: self.elegir("canje_manual"), True
                 )
-            if d["kind"] == "objetivos":
-                for o in j.jugadores[0].objetivos:
+            # Mostrar las tarjetas reales del ganador al revelar su
+            # objetivo personal. En una victoria por 45 países, la
+            # condición general ya está indicada en el diálogo.
+            mostrar_cartas_victoria = (
+                d["kind"] == "victoria"
+                and j.detalle_victoria is not None
+                and j.detalle_victoria.get("tipo") == "personal"
+                and j.ganador_idx is not None
+            )
+            if d["kind"] == "objetivos" or mostrar_cartas_victoria:
+                jugador_objetivos = (
+                    j.jugadores[j.ganador_idx] if mostrar_cartas_victoria
+                    else j.jugadores[0]
+                )
+                for o in jugador_objetivos.objetivos:
                     src = (
                         ASSETS / "objetivos_imagenes" / f'obj_{o["tarjeta_id"]:02d}.png'
                     )
