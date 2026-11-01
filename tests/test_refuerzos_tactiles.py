@@ -37,7 +37,11 @@ class PruebasIncorporacionTactil(unittest.TestCase):
         antes = self.j.tablero[self.pais]["ejercitos"]
         self.assertTrue(self.c.accion("incorporar", 20))
         self.assertEqual(self.j.tablero[self.pais]["ejercitos"], antes + 2)
-        self.assertEqual(self.j.ejercitos_a_colocar, 0)
+        # Al consumir los últimos 2 refuerzos, el motor termina
+        # automáticamente la incorporación y comienza el turno del bot.
+        self.assertEqual(self.j.preparacion_pendientes, 1)
+        self.assertEqual(self.j.turno_idx, 1)
+        self.assertEqual(self.j.ejercitos_a_colocar, 18)
 
     def test_cantidad_respeta_limite_continental(self):
         continente = self.j.tablero[self.pais]["continente"]
