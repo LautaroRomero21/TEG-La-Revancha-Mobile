@@ -4,7 +4,7 @@ El motor en engine/ es una copia sin modificaciones de la v16 de Pygame.
 Ejecutar: python main.py   |   Compilar: buildozer android debug
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 import math
 import time
