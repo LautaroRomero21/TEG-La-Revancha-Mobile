@@ -5,7 +5,7 @@ package.domain = org.tegrevancha.offline
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,ttf,json
 source.exclude_dirs = reference,desktop_reference,tests,.github,__pycache__,.buildozer,bin
-version = 0.1.0
+version = 0.2.0
 requirements = python3,kivy==2.3.1
 # La rama develop incluye la correccion de python-for-android PR #3366:
 # instalacion de wheels Android con las etiquetas de plataforma correctas.
