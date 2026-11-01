@@ -371,6 +371,15 @@ class PantallaInicio(BoxLayout):
             text="Blanco", values=COLORES_OFICIALES, size_hint_y=None, height=dp(46)
         )
         panel.add_widget(color)
+        panel.add_widget(
+            etiqueta("Dificultad de los bots", size_hint_y=None, height=dp(22))
+        )
+        dificultad = Spinner(
+            text="Normal", values=["Normal", "Difícil"],
+            size_hint_y=None, height=dp(46)
+        )
+        panel.add_widget(dificultad)
+        self.selector_dificultad = dificultad
         line1 = BoxLayout(size_hint_y=None, height=dp(36))
         ch_eliminar = CheckBox(active=True, size_hint_x=None, width=dp(50))
         line1.add_widget(ch_eliminar)
@@ -389,6 +398,7 @@ class PantallaInicio(BoxLayout):
                     COLORES_OFICIALES.index(color.text),
                     ch_eliminar.active,
                     ch_anim.active,
+                    "Dificil" if dificultad.text == "Difícil" else "Normal",
                 ),
                 color=(0.15, 0.44, 0.34, 1),
                 altura=52,
@@ -888,8 +898,10 @@ class TegAndroid(App):
                     return True
         return False
 
-    def iniciar(self, n, color, eliminacion, animaciones):
-        c = ControlMovil(n, color, eliminacion, animaciones)
+    def iniciar(self, n, color, eliminacion, animaciones,
+               dificultad="Normal"):
+        c = ControlMovil(n, color, eliminacion, animaciones,
+                         dificultad=dificultad)
         self.rootview.clear_widgets()
         self.rootview.add_widget(VistaJuego(c))
 
