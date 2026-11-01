@@ -1,7 +1,37 @@
 # TEG La Revancha — Migración Android v16 (primera implementación)
 
 **Estado de esta entrega:** código fuente Android + motor completo reutilizado + pruebas del adaptador.
-**NO hay un APK compilado ni probado en teléfono.** Esta entrega requiere compilación en Linux/WSL2/GitHub Actions y validación táctil en hardware real.
+**Se compiló un APK de una versión anterior y abrió en Android.** La sincronización de 31/10/2026 requiere una nueva compilación y pruebas reales en el teléfono.
+
+## Sincronización con PC (31/10/2026)
+
+El motor de Android fue sincronizado con el `main` del repositorio PC
+`LautaroRomero21/TEG-La-Revancha`. Los archivos
+`engine/logic.py`, `engine/data.py`, `engine/pactos.py`,
+`engine/respuestas_pactos.py` y `engine/ia_dificil.py`
+son idénticos a sus equivalentes en `teg_revancha/` de PC.
+
+- Selector de dificultad en el menú de nueva partida: **Normal** (bots normales
+  con las últimas mejoras de estrategia de PC) y **Difícil** (análisis probabilístico
+  de dados, refuerzos, ataques, amenazas, reagrupamientos, tarjetas y diplomacia).
+  Los objetivos secretos de otros jugadores no se consultan.
+- Corregidas las fronteras Chechenia–Kamchatka según el grafo de PC.
+- Ataques conjuntos validados antes de ofrecer un socio o confirmar el pacto,
+  atendiendo las dos fronteras, situación, tropas y pactos.
+- Sincronizadas las correcciones de reagrupamiento y los detalles de victoria.
+  Al ganar se indica la condición cumplida y, en partidas de dos jugadores,
+  las dos misiones secretas si corresponde.
+- La **interfaz Android** conserva mapa a la izquierda, controles táctiles a la
+  derecha, doble toque para incorporar y menú compacto. No se copia la capa Pygame.
+- **Capitales**: las reglas del motor PC no asignan una mecánica especial de
+  capitales; la IA Difícil solo valora países estratégicos por fronteras,
+  amenazas y dominio continental.
+
+Pruebas específicas: `tests/test_sync_pc.py` y `smoke_ui.py` (el test gráfico
+abre una partida Difícil bajo Xvfb antes de compilar con Buildozer).
+
+**Estado:** código sincronizado en GitHub; el APK nuevo requiere completar
+GitHub Actions y luego una prueba real en Android.
 
 ## Arquitectura elegida
 
