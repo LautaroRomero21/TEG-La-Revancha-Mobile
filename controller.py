@@ -10,8 +10,11 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 ENGINE = str(BASE / 'engine')
-if ENGINE not in sys.path:
-    sys.path.insert(0, ENGINE)
+# Asegurar que Android y sus pruebas importen SIEMPRE el motor vigente.
+# La referencia de PC incluida para regresiones contiene otro logic.py.
+if ENGINE in sys.path:
+    sys.path.remove(ENGINE)
+sys.path.insert(0, ENGINE)
 
 from logic import (JuegoTEG, FASE_INCORPORAR, FASE_ATACAR,
                    FASE_REAGRUPAR, FASE_TARJETA)
