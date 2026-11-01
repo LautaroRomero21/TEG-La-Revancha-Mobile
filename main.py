@@ -341,7 +341,7 @@ class PantallaInicio(BoxLayout):
         centro.add_widget(previa)
         panel = BoxLayout(
             orientation="vertical",
-            spacing=dp(12),
+            spacing=dp(6),
             padding=[dp(10), 0, dp(10), 0],
             size_hint_x=0.42,
         )
@@ -361,14 +361,14 @@ class PantallaInicio(BoxLayout):
             text="4",
             values=[str(i) for i in range(2, 7)],
             size_hint_y=None,
-            height=dp(46),
+            height=dp(40),
         )
         panel.add_widget(jugadores)
         panel.add_widget(
             etiqueta("Color de tu ejército", size_hint_y=None, height=dp(22))
         )
         color = Spinner(
-            text="Blanco", values=COLORES_OFICIALES, size_hint_y=None, height=dp(46)
+            text="Blanco", values=COLORES_OFICIALES, size_hint_y=None, height=dp(40)
         )
         panel.add_widget(color)
         panel.add_widget(
@@ -376,16 +376,16 @@ class PantallaInicio(BoxLayout):
         )
         dificultad = Spinner(
             text="Normal", values=["Normal", "Difícil"],
-            size_hint_y=None, height=dp(46)
+            size_hint_y=None, height=dp(40)
         )
         panel.add_widget(dificultad)
         self.selector_dificultad = dificultad
-        line1 = BoxLayout(size_hint_y=None, height=dp(36))
+        line1 = BoxLayout(size_hint_y=None, height=dp(30))
         ch_eliminar = CheckBox(active=True, size_hint_x=None, width=dp(50))
         line1.add_widget(ch_eliminar)
         line1.add_widget(etiqueta("Incluir objetivos de destrucción", tam=13))
         panel.add_widget(line1)
-        line2 = BoxLayout(size_hint_y=None, height=dp(36))
+        line2 = BoxLayout(size_hint_y=None, height=dp(30))
         ch_anim = CheckBox(active=True, size_hint_x=None, width=dp(50))
         line2.add_widget(ch_anim)
         line2.add_widget(etiqueta("Activar animaciones", tam=13))
@@ -401,7 +401,7 @@ class PantallaInicio(BoxLayout):
                     "Dificil" if dificultad.text == "Difícil" else "Normal",
                 ),
                 color=(0.15, 0.44, 0.34, 1),
-                altura=52,
+                altura=46,
             )
         )
         panel.add_widget(
