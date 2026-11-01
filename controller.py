@@ -491,8 +491,8 @@ class ControlMovil:
                 clase=('Objetivo general (45 países)'
                        if detalle.get('tipo')=='general'
                        else 'Misión secreta cumplida')
-                texto=(f'{ganador} ganó la partida.\\n{clase}.'
-                       + (f'\\n' + '\\n'.join(objetivos) if objetivos else ''))
+                texto=(f'{ganador} ganó la partida.\n{clase}.'
+                       + (f'\n' + '\n'.join(objetivos) if objetivos else ''))
                 self._dialogo('victoria','¡VICTORIA!',texto,
                               [('Ver tablero','cerrar')])
             return None
