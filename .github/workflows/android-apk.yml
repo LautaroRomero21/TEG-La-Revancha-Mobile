@@ -9,6 +9,10 @@ on:
       - 'engine/**'
       - 'assets/**'
       - 'buildozer.spec'
+      - 'ejecutar_pruebas.sh'
+      - 'smoke_ui.py'
+      - 'tests/**'
+      - 'desktop_reference/**'
       - '.github/workflows/android-apk.yml'
 concurrency:
   group: teg-android-${{ github.ref }}
