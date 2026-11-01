@@ -4,6 +4,7 @@ Los pactos públicos y condominios tienen lógica vinculante (pactos.py).
 """
 import random
 from pactos import DiplomaciaMixin
+from ia_dificil import EstrategiaDificil
 from collections import deque
 from itertools import combinations, product
 from data import (
@@ -84,12 +85,16 @@ class JuegoTEG(DiplomaciaMixin):
     MAX_DADOS_ATACANTE = 4
     MAX_DADOS_DEFENSOR = 4
 
-    def __init__(self, n_jugadores=4, nombres=None, color_humano=0, orden_inicial=None, objetivos_eliminacion=True):
+    def __init__(self, n_jugadores=4, nombres=None, color_humano=0, orden_inicial=None, objetivos_eliminacion=True, dificultad='Normal'):
         if not 2 <= n_jugadores <= 6:
             raise ValueError('Se requieren entre 2 y 6 jugadores (1 humano, resto bots).')
         if not isinstance(color_humano,int) or not 0 <= color_humano < 6:
             raise ValueError('Color humano fuera del rango (0-5)')
         colores = [color_humano] + [c for c in range(6) if c != color_humano][:n_jugadores-1]
+        if dificultad not in ('Normal','Dificil'):
+            raise ValueError('Dificultad desconocida: Normal o Dificil')
+        self.dificultad = dificultad
+        self.ia_dificil = EstrategiaDificil(self)
         self.n_jugadores = n_jugadores
         self.objetivos_eliminacion = bool(objetivos_eliminacion)
         self.jugadores = [Jugador(i, nombres[i] if nombres and i < len(nombres)
@@ -143,6 +148,7 @@ class JuegoTEG(DiplomaciaMixin):
         self.historial = []
         self.canje_numero = 0
         self.ganador_idx = None
+        self.detalle_victoria = None  # Causa precisa: objetivo general o misión(es) secreta(s).
         self._ultimo_atacante = None
         self.propuesta_pendiente = None
         self.reagrupe_aliado_pendiente = None
@@ -646,8 +652,11 @@ class JuegoTEG(DiplomaciaMixin):
 
     def _verificar_victoria(self, jugador):
         if self.fase=='VICTORIA' or self.etapa=='preparacion':return False
-        if len(self.paises_exclusivos(jugador.idx))>=45:
-            motivo='45 países (objetivo común)'
+        paises=len(self.paises_exclusivos(jugador.idx))
+        if paises>=45:
+            # Victoria común: precede a los objetivos secretos en la misma jugada.
+            detalle={'tipo':'general', 'objetivos':['Ocupar al menos 45 países'],
+                     'paises':paises}
         else:
             resultados=[]
             for obj in jugador.objetivos:
@@ -657,25 +666,36 @@ class JuegoTEG(DiplomaciaMixin):
                 else:exito=self._cumple_ocupacion(jugador.idx,obj)
                 resultados.append(exito)
             if not resultados or not all(resultados):return False
-            motivo='objetivo(s) secreto(s)'
+            # En partidas de 2 se deben cumplir AMBAS misiones: mostrar las dos.
+            detalle={'tipo':'personal',
+                     'objetivos':[obj['descripcion'] for obj in jugador.objetivos],
+                     'paises':paises}
+        self.detalle_victoria=detalle
         self.ganador_idx=jugador.idx
         self.fase='VICTORIA'
-        self.log(f'VICTORIA de {jugador.nombre}: {motivo}')
+        motivo=' / '.join(detalle['objetivos'])
+        clase='objetivo general' if detalle['tipo']=='general' else 'objetivo personal'
+        self.log(f'VICTORIA de {jugador.nombre} ({clase}): {motivo}')
         return True
 
     def reagrupar(self, desde, hacia, cantidad):
         if hacia in self.condominios:
             return self.reagrupar_en_condominio(desde,hacia,cantidad)
+        actor=self.turno_idx
         if (self.fase!=FASE_REAGRUPAR or self.situacion==f'Descanso {self.jugador_actual().color_nombre}'
             or desde not in self.tablero or hacia not in self.tablero
             or not self.son_adyacentes(desde,hacia) or cantidad<1
-            or self.tablero[desde]['propietario']!=self.turno_idx or self.tablero[hacia]['propietario']!=self.turno_idx
-            or self.tablero[desde]['ejercitos']-1-self.reagrupados_recibidos.get(desde,0)<cantidad):
+            or not self.es_propietario(desde,actor) or not self.es_propietario(hacia,actor)
+            or self.ejercitos_de(desde,actor)-1-self.reagrupados_recibidos.get(
+                (desde,actor) if desde in self.condominios else desde,0)<cantidad):
             return False
         if self.zona_para(hacia):return False  # Mantener exactamente una ficha.
-        self.tablero[desde]['ejercitos']-=cantidad
-        self.tablero[hacia]['ejercitos']+=cantidad
-        self.reagrupados_recibidos[hacia]=self.reagrupados_recibidos.get(hacia,0)+cantidad
+        # Mover exclusivamente las tropas del jugador: si el origen es compartido,
+        # las fichas del socio no pueden utilizarse ni verse afectadas.
+        self._ajustar_guarnicion(desde,actor,-cantidad)
+        self._ajustar_guarnicion(hacia,actor,cantidad)
+        llave_destino=(hacia,actor) if hacia in self.condominios else hacia
+        self.reagrupados_recibidos[llave_destino]=self.reagrupados_recibidos.get(llave_destino,0)+cantidad
         self.log(f'REAGRUPE {desde}->{hacia}: {cantidad} ejércitos')
         return True
 
@@ -949,86 +969,251 @@ class JuegoTEG(DiplomaciaMixin):
                 peso+=12
         return peso
 
-    def _frontera_estrategica(self, pais, j):
-        """Presión y oportunidades cercanas: concentración útil, no al azar."""
+    def _contexto_estrategico_bot(self, jugador):
+        """Foto en tiempo real de la partida para cada decisión de la IA.
+
+        Cuenta países *exclusivos* para la victoria, el avance continental de
+        cada rival y los frentes de conquista; no consulta objetivos secretos
+        ajenos ni utiliza información que el jugador no debería conocer.
+        """
+        paises={j.idx:0 for j in self.jugadores}
+        continentes={c:{j.idx:0 for j in self.jugadores} for c in CONTINENTES}
+        totales={c:0 for c in CONTINENTES}
+        for pais,d in self.tablero.items():
+            c=d['continente']
+            totales[c]+=1
+            dueno=d['propietario']
+            if dueno is not None and pais not in self.condominios:
+                paises[dueno]+=1
+                continentes[c][dueno]+=1
+        return {'paises':paises,'continentes':continentes,'totales':totales,
+                'lideres':[i for i,n in paises.items() if i!=jugador.idx and n>=38]}
+
+    def _valor_territorio_bot(self, pais, jugador, contexto=None):
+        """Valor de capturar/defender un país: misión, rival, continentes y mapa."""
+        contexto=contexto or self._contexto_estrategico_bot(jugador)
         d=self.tablero[pais]
-        fr=[q for q in d['fronteras'] if self.tablero[q]['propietario']!=j.idx]
-        if not fr:return -7.0
-        amenaza=sum(max(0,self.tablero[q]['ejercitos']-d['ejercitos']) for q in fr)
-        accesibles=sum(1 for q in fr if self._ataque_permitido(pais,q))
-        objetivos=max((self._preferencia(q,j) for q in fr),default=0)
-        return min(len(fr),4)*2.0+min(amenaza,18)*.35+objetivos*.65+accesibles
+        dueno=d['propietario']
+        cont=d['continente']
+        total=contexto['totales'][cont]
+        propios=contexto['continentes'][cont][jugador.idx]
+        puntaje=self._preferencia(pais,jugador)*.85
+        # Los bonos continentales mejoran a todos, incluso sin misión asociada.
+        faltantes=total-propios
+        if dueno!=jugador.idx:
+            puntaje+=1.0+5.0*propios/max(1,total)
+            if faltantes==1:puntaje+=13
+            elif faltantes==2:puntaje+=6
+            if dueno is not None:
+                # Cortar una victoria rival o impedirle cerrar un continente.
+                dominio=contexto['continentes'][cont][dueno]
+                if dominio>=total-1:puntaje+=11
+                elif dominio>=total-2:puntaje+=5
+                lider=contexto['paises'][dueno]
+                if lider>=38:puntaje+=min(24,(lider-37)*3.5)
+            propios_total=contexto['paises'][jugador.idx]
+            if propios_total>=39:puntaje+=min(20,(propios_total-38)*2.8)
+        # Enlaces con muchos territorios: valen para maniobrar entre frentes.
+        puntaje+=min(5,len(d['fronteras']))*.45
+        return puntaje
+
+    def _enemigos_limítrofes_bot(self, pais, jugador):
+        """Fronteras hostiles legales (los pactos activos cuentan como protección)."""
+        enemigos=[]
+        for q in self.tablero[pais]['fronteras']:
+            if self.es_propietario(q,jugador.idx):continue
+            otro=self.tablero[q]['propietario']
+            if otro is None:continue
+            if self._ataque_permitido(q,pais,actor_idx=otro):
+                enemigos.append(q)
+        return enemigos
+
+    def _frontera_estrategica(self, pais, j):
+        """Evalúa amenaza concreta, rutas de avance y importancia del objetivo."""
+        d=self.tablero[pais]
+        vecinos=self._enemigos_limítrofes_bot(pais,j)
+        if not vecinos:return -6.0
+        propios=self.ejercitos_de(pais,j.idx)
+        mayores=max(self.tablero[q]['ejercitos'] for q in vecinos)
+        puntos=sum(1 for q in vecinos if self._ataque_permitido(pais,q))
+        oportunidad=max((self._preferencia(q,j) for q in vecinos),default=0)
+        vulnerabilidad=max(0,mayores+1-propios)
+        return (len(vecinos)*1.9+min(vulnerabilidad,16)*1.4+
+                oportunidad*.5+puntos*.8-min(max(0,propios-mayores-5),15)*.5)
 
     def _seleccionar_refuerzo_bot(self, j, paises):
-        """Selecciona territorio con estrategia y ruido moderado; no repite siempre el máximo."""
+        """Elige un frente donde los nuevos ejércitos puedan obtener conquistas.
+
+        No intenta salvar sin criterio cada país aislado frente a ejércitos
+        gigantescos: equilibra oportunidad, urgencia, valor territorial y el
+        costo de preparar una ofensiva. Reevalúa el tablero en cada decisión.
+        """
+        contexto=self._contexto_estrategico_bot(j)
         perfil=j.estilo_bot or 'Equilibrado'
         valores=[]
         for p in paises:
-            d=self.tablero[p]
-            fr=self.paises_limites_enemigos(p)
-            propios_en= self.bot_refuerzos_por_pais.get(p,0)
-            presion=self._frontera_estrategica(p,j)
-            objetivo=self._preferencia(p,j)
-            if perfil=='Agresivo':
-                s=presion*1.6+objetivo*.6- d['ejercitos']*.21-propios_en*.65
-            elif perfil=='Defensivo':
-                amenaza=max((self.tablero[q]['ejercitos'] for q in fr),default=0)
-                s=presion*.8+min(amenaza,18)*.8+objetivo*.35-d['ejercitos']*.8-propios_en*2.0
+            propios=self.ejercitos_de(p,j.idx)
+            vecinos=[q for q in self.tablero[p]['fronteras']
+                     if not self.es_propietario(q,j.idx)
+                     and self.tablero[q]['propietario'] is not None
+                     and self._ataque_permitido(p,q)]
+            repeticiones=self.bot_refuerzos_por_pais.get(p,0)
+            if not vecinos:
+                valores.append((-25-repeticiones,p))
+                continue
+            fuerzas=[self.tablero[q]['ejercitos'] for q in vecinos]
+            debiles=sum(b<=3 for b in fuerzas)
+            oportunidad=max((self._valor_territorio_bot(q,j,contexto) for q in vecinos),
+                            default=0)
+            menor=min(fuerzas)
+            mayor=max(fuerzas)
+            deficit=max(0,min(menor*2+3,10)-propios)
+            # Evitar desperdiciar refuerzos para una defensa ya irrecuperable.
+            imposible=max(0,mayor-propios-12)
+            puntuacion=(3.5*len(vecinos)+oportunidad*.7+debiles*4.0+
+                        min(deficit,6)-min(imposible,18)-repeticiones*.75)
+            if propios>menor*3+5:puntuacion-=8
+            if perfil=='Defensivo':
+                puntuacion+=min(6,max(0,mayor+1-propios))*.85
+            elif perfil=='Agresivo':
+                puntuacion+=debiles*1.4
             elif perfil=='Objetivo':
-                s=presion*.75+objetivo*1.9-d['ejercitos']*.35-propios_en*1.0
+                puntuacion+=max((self._preferencia(q,j) for q in vecinos),default=0)*.35
             elif perfil=='Oportunista':
-                presa=min((self.tablero[q]['ejercitos'] for q in fr),default=12)
-                s=presion*1.2+objetivo*.6-min(presa,10)*.6-d['ejercitos']*.4-propios_en*1.6
-            else:
-                s=presion+objetivo*.95-d['ejercitos']*.48-propios_en*1.55
-            s+=random.uniform(-2.0,2.0)
-            valores.append((s,p))
-        valores.sort(reverse=True)
-        # Entre los mejores, evita una conducta completamente previsible.
-        mejores=valores[:min(3,len(valores))]
-        pesos=[max(.2,5-(mejores[0][0]-valor)) for valor,_ in mejores]
-        return random.choices([p for _,p in mejores],weights=pesos,k=1)[0]
+                puntuacion+=sum(b<=2 for b in fuerzas)*1.1
+            puntuacion+=random.uniform(-.3,.3)
+            valores.append((puntuacion,p))
+        return max(valores)[1]
+
+    def _cantidad_refuerzo_bot(self, j, pais, disponibles):
+        """Puede colocar 1 para mantener, o concentrar hasta 9 para conquistar."""
+        if disponibles<=1:return 1
+        propios=self.ejercitos_de(pais,j.idx)
+        enemigos=[self.tablero[q]['ejercitos']
+                  for q in self.tablero[pais]['fronteras']
+                  if not self.es_propietario(q,j.idx) and self._ataque_permitido(pais,q)]
+        if not enemigos:return 1
+        menor=min(enemigos)
+        mayor=max(enemigos)
+        if propios>=2*mayor+3:return 1
+        if menor<=3 and propios>=menor*2+4:return 1
+        # Preparar una verdadera ofensiva, en lugar de dispersar 2 tropas
+        # por cada territorio que todavía no puede efectuar ataques útiles.
+        cantidad=max(3,round(menor*1.8+5-propios))
+        if mayor>propios:
+            cantidad=max(cantidad,round((mayor-propios)*.75)+2)
+        perfil=j.estilo_bot or 'Equilibrado'
+        if perfil=='Defensivo' and mayor>propios:
+            cantidad=max(cantidad,round((mayor-propios)*.9)+3)
+        elif perfil=='Agresivo' and menor<=3:
+            cantidad+=1
+        return min(disponibles,9,cantidad)
 
     def _ataques_posibles_bot(self, j):
+        """Reevalúa ataques después de cada tirada, considerando amenazas y carreras."""
         perfil=j.estilo_bot or 'Equilibrado'
-        umbrales={'Agresivo':1.08,'Defensivo':1.85,'Objetivo':1.30,
-                  'Oportunista':1.30,'Equilibrado':1.48}
+        umbrales={'Agresivo':1.10,'Defensivo':1.70,'Objetivo':1.30,
+                  'Oportunista':1.29,'Equilibrado':1.40}
+        ctx=self._contexto_estrategico_bot(j)
         lista=[]
         for p in self.paises_de(j.idx):
             a=self.ejercitos_de(p,j.idx)
             if a<=1:continue
+            # La guarnición interna es un objetivo reglamentario excepcional.
+            if p in self.condominios:
+                rivales=[i for i in self.condominios[p] if i!=j.idx]
+                for rival in rivales:
+                    b=self.ejercitos_de(p,rival)
+                    if (b>=1 and a-1>=b*umbrales[perfil] and
+                        not self._prohibido_por_pacto(j.idx,rival,p,p) and
+                        not any(pacto['activo'] and pacto['tipo']=='condominio' and
+                            pacto['pais']==p and set(pacto['jugadores'])=={j.idx,rival}
+                            for pacto in self.pactos)):
+                        prioridad=self._valor_territorio_bot(p,j,ctx)+min((a-1)/b,6)*3
+                        lista.append((prioridad,p,p))
             for q in self.paises_limites_enemigos(p):
                 if not self._ataque_permitido(p,q) or self.es_propietario(q,j.idx):continue
+                if p in self.condominios and self.tablero[q]['propietario'] in self.condominios[p]:continue
                 b=self.tablero[q]['ejercitos']
-                if a-1 < b*umbrales[perfil]:continue
-                op=self._preferencia(q,j)
-                ventaja=(a-1)/max(1,b)
-                presion_desde=len(self.paises_limites_enemigos(p))
-                riesgo_restante=max((self.tablero[v]['ejercitos'] for v in self.paises_limites_enemigos(p) if v!=q),default=0)
-                puntuacion=op*(1.5 if perfil=='Objetivo' else 1.0) + min(ventaja,7)*3 - b*.55
-                puntuacion+=min(presion_desde,4)*.3-min(riesgo_restante,14)*.22
-                if perfil=='Oportunista':puntuacion+=6/max(1,b)
-                if perfil=='Defensivo':puntuacion-=b*.85
-                puntuacion+=random.uniform(-1.5,1.5)
-                lista.append((puntuacion,p,q))
+                if b<1:continue
+                valor=self._valor_territorio_bot(q,j,ctx)
+                objetivo_final=(ctx['paises'][j.idx]>=43 or
+                                (self.tablero[q]['propietario'] is not None and
+                                 ctx['paises'][self.tablero[q]['propietario']]>=43))
+                umbral=(max(1.04,umbrales[perfil]-.12) if objetivo_final else umbrales[perfil])
+                if a-1 < b*umbral:continue
+                ventaja=(a-1)/b
+                # Riesgo real: no desguarnecer un país amenazado por otros.
+                otros=[self.tablero[v]['ejercitos'] for v in self._enemigos_limítrofes_bot(p,j)
+                       if v!=q]
+                mayor_otro=max(otros,default=0)
+                presion_otro=max(0,mayor_otro+1-a)
+                frontera_siguiente=sum(1 for v in self.tablero[q]['fronteras']
+                                       if self.tablero[v]['propietario']!=j.idx and v!=p)
+                puntaje=valor*(1.28 if perfil=='Objetivo' else 1.0)
+                puntaje+=min(ventaja,7)*3.2-b*.68
+                puntaje-=presion_otro*1.35+frontera_siguiente*.45
+                if perfil=='Defensivo':puntaje-=max(0,b-4)*.7
+                elif perfil=='Oportunista':puntaje+=5/max(1,b)
+                elif perfil=='Agresivo':puntaje+=min(ventaja,5)*.7
+                if self.conquistas_turno==0 and self.etapa=='hostilidades' and len(j.tarjetas)<5:
+                    puntaje+=3.2  # Una conquista habilita tarjeta al terminar.
+                puntaje+=random.uniform(-.45,.45)
+                lista.append((puntaje,p,q))
         return sorted(lista,reverse=True)
 
+    def _distancia_frente_bot(self, jugador):
+        """Distancia de cada territorio a un frente útil, dentro de países propios."""
+        propios=set(self.paises_exclusivos(jugador.idx))
+        frentes=[p for p in propios if any(self.tablero[q]['propietario']!=jugador.idx
+                 and self._ataque_permitido(p,q) for q in self.tablero[p]['fronteras'])]
+        dist={p:0 for p in frentes}
+        cola=deque(frentes)
+        while cola:
+            p=cola.popleft()
+            for q in self.tablero[p]['fronteras']:
+                if q in propios and q not in dist:
+                    dist[q]=dist[p]+1
+                    cola.append(q)
+        return dist
+
     def _reagrupe_estrategico_bot(self, j):
-        # Hasta dos transferencias seguras; no mover desde territorios atacables.
+        """Redistribuye desde retaguardia o desde frentes sobrados hacia presión real."""
+        dist=self._distancia_frente_bot(j)
+        if not dist:return None
+        contexto=self._contexto_estrategico_bot(j)
         opciones=[]
-        for p in self.paises_exclusivos(j.idx):
-            d=self.tablero[p]
-            disponibles=d['ejercitos']-1-self.reagrupados_recibidos.get(p,0)
-            if disponibles<2:continue
-            if self.paises_limites_enemigos(p):continue
-            for q in d['fronteras']:
-                if self.tablero[q]['propietario']!=j.idx or not self.paises_limites_enemigos(q):continue
-                valor=self._frontera_estrategica(q,j)+self._preferencia(q,j)*.5
-                opciones.append((valor,p,q,disponibles))
-        if not opciones:return None
-        opciones.sort(reverse=True)
-        _,p,q,cantidad=opciones[0]
-        if self.reagrupar(p,q,cantidad):return (p,q,cantidad)
+        propios=set(self.paises_exclusivos(j.idx))
+        for p in propios:
+            if p not in dist:continue
+            soldados=self.ejercitos_de(p,j.idx)
+            enemigos=self._enemigos_limítrofes_bot(p,j)
+            mayor=max((self.tablero[q]['ejercitos'] for q in enemigos),default=0)
+            recibidos=self.reagrupados_recibidos.get(p,0)
+            # Nunca mover tropas recibidas este turno ni abandonar una frontera
+            # vulnerable a una reconquista inmediata.
+            reserva=max(1,int(mayor*.85)+1) if enemigos else 1
+            libres=soldados-reserva-recibidos
+            if libres<=0:continue
+            for q in self.tablero[p]['fronteras']:
+                if q not in dist or q not in propios:continue
+                q_enemigos=self._enemigos_limítrofes_bot(q,j)
+                q_mayor=max((self.tablero[v]['ejercitos'] for v in q_enemigos),default=0)
+                delta=dist[p]-dist[q]
+                fuerza_destino=self.ejercitos_de(q,j.idx)
+                necesidad=max(0,q_mayor+2-fuerza_destino)
+                if delta<0:continue
+                if delta==0 and (not q_enemigos or necesidad==0 or
+                                 self._frontera_estrategica(q,j)<=self._frontera_estrategica(p,j)+3):
+                    continue
+                valor=delta*12+necesidad*1.7
+                valor+=max((self._valor_territorio_bot(v,j,contexto)
+                            for v in q_enemigos),default=0)*.6
+                valor-=max(0,mayor+2-soldados)*3
+                cantidad=min(libres,max(1,necesidad+2) if q_enemigos else libres)
+                if cantidad>0:opciones.append((valor,p,q,cantidad))
+        for _,p,q,cantidad in sorted(opciones,reverse=True):
+            if self.reagrupar(p,q,cantidad):return (p,q,cantidad)
         return None
 
     def _propuesta_ocasional_bot(self):
@@ -1038,6 +1223,7 @@ class JuegoTEG(DiplomaciaMixin):
         if clave in self._bot_diplomacia_intentada:return None
         self._bot_diplomacia_intentada.add(clave)
         if self.fase!=FASE_ATACAR or j.idx==0 or random.random()>.23:return None
+        contexto=self._contexto_estrategico_bot(j)
         # Buscar un objetivo compartido que pueda ser atacado desde dos países.
         aliados=[]
         for pais in self.paises_exclusivos(j.idx):
@@ -1045,10 +1231,11 @@ class JuegoTEG(DiplomaciaMixin):
             for destino in self.tablero[pais]['fronteras']:
                 victima=self.tablero[destino]['propietario']
                 if victima is None or victima==j.idx:continue
+                if not self._ataque_permitido(pais,destino,actor_idx=j.idx):continue
                 for vecino in self.tablero[destino]['fronteras']:
                     socio=self.tablero[vecino]['propietario']
                     if socio is None or socio in (victima,j.idx) or self.tablero[vecino]['ejercitos']<3:continue
-                    if socio==0:
+                    if socio==0 and self.puede_proponer_agresion_conjunta(j.idx,socio,pais,vecino,destino):
                         aliados.append((pais,vecino,destino,socio))
         if aliados and random.random()<.55:
             o1,o2,destino,socio=random.choice(aliados)
@@ -1065,6 +1252,9 @@ class JuegoTEG(DiplomaciaMixin):
                  and self.tablero[q]['propietario'] is not None]
         random.shuffle(bordes)
         for p,q,socio in bordes:
+            if contexto['paises'].get(socio,0)>=39:continue
+            if any(o['tipo']=='eliminacion' and o.get('objetivo_idx')==socio
+                   and not o.get('imposible') for o in j.objetivos):continue
             if socio==0:
                 self.propuesta_pendiente={'tipo':'pais','a':j.idx,'b':0,'paises':(p,q)}
                 return {'texto':f'{j.nombre} propone NO AGRESIÓN {p}/{q}. Esperando respuesta.'}
@@ -1092,6 +1282,13 @@ class JuegoTEG(DiplomaciaMixin):
         """Negociación voluntaria, pero pactos firmados son obligatorios."""
         j=self.jugadores[bot_idx]
         if not j.es_bot or j.eliminado:return False
+        # Una tregua con quien está por alcanzar 45 países, o con la víctima
+        # necesaria para la misión propia, perjudicaría la estrategia.
+        if tipo!='agresion':
+            contexto=self._contexto_estrategico_bot(j)
+            if contexto['paises'].get(otro_idx,0)>=39:return False
+            if any(o['tipo']=='eliminacion' and o.get('objetivo_idx')==otro_idx
+                   and not o.get('imposible') for o in j.objetivos):return False
         perfil=j.estilo_bot or 'Equilibrado'
         chances={'Agresivo':.55,'Defensivo':.92,'Objetivo':.75,
                  'Oportunista':.70,'Equilibrado':.82}
@@ -1106,6 +1303,8 @@ class JuegoTEG(DiplomaciaMixin):
         j=self.jugador_actual()
         if not j.es_bot or j.eliminado or self.fase=='VICTORIA' or self.propuesta_pendiente or self.reagrupe_aliado_pendiente:return None
         idx=j.idx
+        if self.dificultad=='Dificil':
+            return self.ia_dificil.paso(j)
         if self.fase==FASE_INCORPORAR:
             if (self.etapa=='hostilidades' and j.canje_ultima_ronda!=self.ronda
                     and self.opcion_canje(j) is not None):
@@ -1120,8 +1319,7 @@ class JuegoTEG(DiplomaciaMixin):
             libres=self.ejercitos_a_colocar-sum(self.refuerzos_continente.values())
             maximo=min(self.ejercitos_a_colocar,pool if pool else libres)
             perfil=j.estilo_bot or 'Equilibrado'
-            lote={'Agresivo':4,'Defensivo':2,'Objetivo':3,'Oportunista':2,'Equilibrado':3}[perfil]
-            cantidad=max(1,min(maximo,lote))
+            cantidad=self._cantidad_refuerzo_bot(j,pais,maximo)
             if not self.incorporar(pais,cantidad):raise RuntimeError('Bot no pudo incorporar tropas')
             self.bot_refuerzos_por_pais[pais]=self.bot_refuerzos_por_pais.get(pais,0)+cantidad
             return {'texto':f'{j.nombre} ({perfil}): +{cantidad} en {pais}', 'accion':'incorporar', 'pais':pais, 'cantidad':cantidad}
@@ -1150,7 +1348,18 @@ class JuegoTEG(DiplomaciaMixin):
                         if d['propietario']==idx or q in self.condominios or d['ejercitos']<4:continue
                         dist=self.distancia(p,q)
                         if dist is None or not 1<=dist<=3:continue
-                        score=d['ejercitos']*.28+self._preferencia(q,j)*2-dist*1.2
+                        # Reservar misiles para amenazas concretas y frentes
+                        # donde el bombardeo facilite un ataque posterior.
+                        propios_cerca=[v for v in d['fronteras'] if self.es_propietario(v,idx)]
+                        bloqueado=bool(propios_cerca and all(
+                            self.ejercitos_de(v,idx)-1 < d['ejercitos']*1.30
+                            for v in propios_cerca))
+                        peligro=any(self.ejercitos_de(v,idx)<d['ejercitos']
+                                   for v in propios_cerca)
+                        if not bloqueado and not peligro:continue
+                        score=(self._valor_territorio_bot(q,j)*.7+
+                               (10 if bloqueado else 0)+(7 if peligro else 0)+
+                               max(0,4-dist)*2.3-d['ejercitos']*.12)
                         opciones.append((score,p,q))
                 for _,p,q in sorted(opciones,reverse=True)[:8]:
                     if self.lanzar_misil(q,desde=p):
