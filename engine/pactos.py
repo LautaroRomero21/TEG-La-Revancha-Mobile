@@ -282,24 +282,34 @@ class DiplomaciaMixin:
     def zona_para(self,pais):
         return next((z for z in self.zonas_internacionales if z['activa'] and z['pais']==pais),None)
 
-    def proponer_agresion_conjunta(self,a,b,origen_a,origen_b,destino,lider=None):
-        """Pacto público para ejecutar en el próximo turno de ataque del líder.
+    def puede_proponer_agresion_conjunta(self,a,b,origen_a,origen_b,destino,lider=None):
+        """Valida ANTES de negociar: situación, fronteras, tropas y pactos.
 
-        Dos aliados pueden atacar desde países diferentes, o desde la misma
-        guarnición compartida, caso en que el ataque es voluntario.
+        Evita proponer ataques que Fronteras abiertas/cerradas invalidaría
+        recién después de que el otro jugador los aceptara.
         """
         lider=a if lider is None else lider
-        if (a==b or lider not in (a,b) or self.etapa!='hostilidades' or
-            self.fase=='VICTORIA' or self.conquista_pendiente or
-            any(self.jugadores[i].eliminado for i in (a,b))):return None
-        if destino not in self.tablero or destino in self.condominios or self.tablero[destino]['propietario'] in (a,b):return None
-        if not (self.es_propietario(origen_a,a) and self.es_propietario(origen_b,b)):return None
-        if min(self.ejercitos_de(origen_a,a),self.ejercitos_de(origen_b,b))<2:return None
+        if (a==b or a not in range(self.n_jugadores) or b not in range(self.n_jugadores)
+            or lider not in (a,b) or self.etapa!='hostilidades'
+            or self.fase=='VICTORIA' or self.conquista_pendiente
+            or any(self.jugadores[i].eliminado for i in (a,b))):return False
+        if destino not in self.tablero or destino in self.condominios:return False
+        defensor=self.tablero[destino]['propietario']
+        if defensor is None or defensor in (a,b):return False
+        if origen_a not in self.tablero or origen_b not in self.tablero:return False
+        if not self.es_propietario(origen_a,a) or not self.es_propietario(origen_b,b):return False
+        if min(self.ejercitos_de(origen_a,a),self.ejercitos_de(origen_b,b))<2:return False
+        if origen_a==origen_b and origen_a not in self.condominios:return False
+        for actor,origen in ((a,origen_a),(b,origen_b)):
+            if self.situacion==f'Descanso {self.jugadores[actor].color_nombre}':return False
+            if not self._ataque_permitido(origen,destino,actor_idx=actor):return False
+        return True
+
+    def proponer_agresion_conjunta(self,a,b,origen_a,origen_b,destino,lider=None):
+        """Pacto público para el turno del líder; validar ANTES del acuerdo."""
+        lider=a if lider is None else lider
+        if not self.puede_proponer_agresion_conjunta(a,b,origen_a,origen_b,destino,lider):return None
         fuente_compartida=origen_a==origen_b
-        if fuente_compartida and origen_a not in self.condominios:return None
-        if not self.son_adyacentes(origen_a,destino) or not self.son_adyacentes(origen_b,destino):return None
-        if self._prohibido_por_pacto(a,self.tablero[destino]['propietario'],origen_a,destino):return None
-        if self._prohibido_por_pacto(b,self.tablero[destino]['propietario'],origen_b,destino):return None
         ronda_destino=self.ronda
         if self.etapa_ronda=='ATAQUE':
             # Si el líder ya terminó su turno de ataque en esta ronda,
@@ -396,13 +406,16 @@ class DiplomaciaMixin:
             actor not in self.condominios[destino] or cantidad<1 or
             not self.son_adyacentes(desde,destino) or
             not self.es_propietario(desde,actor) or
-            self.ejercitos_de(desde,actor)-1-self.reagrupados_recibidos.get((desde,actor),0)<cantidad):return False
+            self.ejercitos_de(desde,actor)-1-self.reagrupados_recibidos.get(
+                (desde,actor) if desde in self.condominios else desde,0)<cantidad):return False
         if actor!=self.turno_idx:
             # Única excepción: el aliado que participó en la conquista de ese
             # condominio, después de reagrupar el líder y antes del próximo turno.
             if not any(a['estado']=='conquistada' and a['destino']==destino and
                 actor in a['jugadores'] and self.turno_idx==a['lider'] and self.ronda==a['ronda']
                 for a in self.agresiones_pendientes):return False
+        if actor==self.turno_idx and self.situacion==f'Descanso {self.jugadores[actor].color_nombre}':
+            return False
         self._ajustar_guarnicion(desde,actor,-cantidad)
         self._ajustar_guarnicion(destino,actor,cantidad)
         self.reagrupados_recibidos[(destino,actor)]=self.reagrupados_recibidos.get((destino,actor),0)+cantidad
